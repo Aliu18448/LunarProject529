@@ -1,94 +1,101 @@
 import gymnasium as gym
 import tensorflow as tf
-import pandas as pd
+import numpy as np
+import random
+from collections import deque
 from keras import layers, Model, optimizers
-from collections import defaultdict
-from Agent import neural_network
 
-Q = defaultdict(float)
-gamma = 0.99  # Discounting factor
-alpha = 0.5  # soft update param
+# --- Hyperparameters ---
+gamma = 0.99
+epsilon = 1.0
+epsilon_min = 0.01
+epsilon_decay = 0.995
+batch_size = 64
 
+memory = deque(maxlen=20000) # Replay Buffer
 
-env = gym.make("LunarLander-v3", continuous=False, gravity=-10.0,
-               enable_wind=False, wind_power=15.0, turbulence_power=1.5, render_mode = "human")
+# --- Environment Setup ---
+env = gym.make("LunarLander-v3", continuous=False, render_mode="human")
+observation_size = int(env.observation_space.shape[0])
+action_size = int(env.action_space.n) # This is 4 for LunarLander
 
-observation, info = env.reset()
-# observation: what the agent can "see" - vechile position, velocity, etc.
-# info: extra debugging information (usually not needed for basic learning)
-
-print(f"Starting observation: {observation}")
-# Example output: [ 0.01234567 -0.00987654  0.02345678  0.01456789]
-# [cart_position, cart_velocity, pole_angle, pole_angular_velocity]
-observation_size = env.observation_space.shape[0]
-
-def create_q_model(obs_size, act_size):
-    inputs = layers.Input(shape=(obs_size,))
-    x = layers.Dense(32, activation='relu')(inputs)
-    x = layers.Dense(32, activation='relu')(x)
-    outputs = layers.Dense(act_size, activation=None)(x)
+# --- Model Definition ---
+def create_q_model(observation_size, action_size):
+    inputs = layers.Input(shape=(observation_size,))
+    # shape is a tuple, so can empty one side for input
+    x = layers.Dense(64, activation='relu')(inputs)
+    x = layers.Dense(64, activation='relu')(x)
+    outputs = layers.Dense(action_size, activation=None)(x)
     return Model(inputs=inputs, outputs=outputs)
 
-# Initialize networks
-observation_size = env.observation_space.shape[0]
-act_size = 2 # Assuming 2 based on your layers_sizes [32, 32, 2]
-
-q_primary = create_q_model(observation_size, act_size)
-q_target = create_q_model(observation_size, act_size)
-
-# Sync weights initially
+q_primary = create_q_model(observation_size, action_size)
+q_target = create_q_model(observation_size, action_size)
 q_target.set_weights(q_primary.get_weights())
 
 optimizer = optimizers.Adam(learning_rate=0.001)
 
-def train_step(states, actions, rewards, states_next, done_flags, gamma=0.99):
-    # 1. Calculate Target Q-values (Bellman Equation)
-    # We use q_target for the next states
-    next_q_values = q_target(states_next)
-    max_q_next = tf.reduce_max(next_q_values, axis=-1)
+# --- Training Logic ---
+@tf.function
+def train_step(states, actions, rewards, next_states, dones):
+    next_q = q_target(next_states)
+    max_next_q = tf.reduce_max(next_q, axis=1)
+    target_q = rewards + (gamma * max_next_q * (1.0 - dones))
     
-    # Target y = r + gamma * max(Q_target) * (1 - done)
-    y_targets = rewards + (1.0 - done_flags) * gamma * max_q_next
-
-    # 2. Record operations for automatic differentiation
     with tf.GradientTape() as tape:
-        # Get Q-values for current states
-        current_q_values = q_primary(states)
+        current_q = q_primary(states)
+        action_masks = tf.one_hot(actions, action_size)
+        preds = tf.reduce_sum(current_q * action_masks, axis=1)
+        loss = tf.reduce_mean(tf.square(target_q - preds))
         
-        # Select the Q-values for the specific actions taken
-        action_masks = tf.one_hot(actions, act_size)
-        preds = tf.reduce_sum(current_q_values * action_masks, axis=-1)
-        
-        # Calculate Mean Squared Error Loss
-        loss = tf.reduce_mean(tf.square(y_targets - preds))
-
-    # 3. Apply Gradients
-    variables = q_primary.trainable_variables
-    gradients = tape.gradient(loss, variables)
-    optimizer.apply_gradients(zip(gradients, variables))
-    
+    grads = tape.gradient(loss, q_primary.trainable_variables)
+    optimizer.apply_gradients(zip(grads, q_primary.trainable_variables))
     return loss
 
-target_weights = q_target.get_weights()
-primary_weights = q_primary.get_weights()
+# --- Main Loop ---
+for episode in range(500):
+    state, info = env.reset()
+    state = np.reshape(state, [1, observation_size])
+    total_reward = 0
+    
+    for time in range(1000):
+        # 1. Epsilon-Greedy Action Selection
+        if np.random.rand() <= epsilon:
+            action = env.action_space.sample()
+        else:
+            q_values = q_primary(state)
+            action = np.argmax(q_values[0])
 
-episode_over = False
-total_reward = 0
+        # 2. Environment Step
+        next_state, reward, terminated, truncated, _ = env.step(action)
+        next_state = np.reshape(next_state, [1, observation_size])
+        done = terminated or truncated
+        
+        # 3. Store in Replay Buffer
+        memory.append((state, action, reward, next_state, float(done)))
+        state = next_state
+        total_reward += reward
 
-while not episode_over:
-    # Choose an action: 0 = push cart left, 1 = push cart right
-    action = env.action_space.sample()  # Random action for now - real agents will be smarter!
+        # 4. Train from Experience
+        if len(memory) > batch_size:
+            minibatch = random.sample(memory, batch_size)
+            
+            # Convert minibatch to tensors
+            s_batch = tf.convert_to_tensor(np.vstack([x[0] for x in minibatch]), dtype=tf.float32)
+            a_batch = tf.convert_to_tensor(np.array([x[1] for x in minibatch]), dtype=tf.int32)
+            r_batch = tf.convert_to_tensor(np.array([x[2] for x in minibatch]), dtype=tf.float32)
+            ns_batch = tf.convert_to_tensor(np.vstack([x[3] for x in minibatch]), dtype=tf.float32)
+            d_batch = tf.convert_to_tensor(np.array([x[4] for x in minibatch]), dtype=tf.float32)
+            
+            train_step(s_batch, a_batch, r_batch, ns_batch, d_batch)
 
-    # Take the action and see what happens
-    observation, reward, terminated, truncated, info = env.step(action)
+        if done:
+            # Update Target Network periodically
+            q_target.set_weights(q_primary.get_weights())
+            print(f"Episode: {episode}, Score: {total_reward}, Epsilon: {epsilon:.2f}")
+            break
+            
+    # Decay exploration
+    if epsilon > epsilon_min:
+        epsilon *= epsilon_decay
 
-    # reward: 
-    # terminated:
-    # truncated:
-
-    total_reward += reward
-    episode_over = terminated or truncated
-
-print(f"Episode finished! Total reward: {total_reward}")
 env.close()
-
