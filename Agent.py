@@ -21,8 +21,8 @@ class Double_Network(tf.keras.Model):
         super().__init__()
         self.l1 = layers.Dense(64, activation='relu')
         self.l2 = layers.Dense(64, activation='relu')
-        self.state = layers.Dense(1, activation='relu')
-        self.action = layers.Dense(action_size, activation='relu')
+        self.state = layers.Dense(1, activation=None)
+        self.action = layers.Dense(action_size, activation=None)
     
     def call(self, input_size):
         x = self.l1(input_size) # Dot products
@@ -75,7 +75,7 @@ class Agent():
         self.replace = replace
         self.batch_size = 64
         self.min_epsilon = (epsilon/100.0)
-        self.epsilon_decay = 0.001
+        self.epsilon_decay = 0.995
         self.trainstep = 0
         self.memory = replay()
         optim = optimizers.Adam(learning_rate=lr)
@@ -103,9 +103,6 @@ class Agent():
     def update_target(self):
         self.train_net.set_weights(self.Q_net.get_weights())
     
-    def update_epsilon(self):
-        self.epsilon = self.epsilon - self.epsilon_decay if self.epsilon > self.min_epsilon else self.min_epsilon
-        return self.epsilon
 
     def train(self):
         if self.memory.pointer < self.batch_size:
@@ -120,7 +117,6 @@ class Agent():
         Q_train = np.copy(train)
         Q_train[batch_index, action] = reward + self.gamma * next_state_val[batch_index, max_action]*result 
         self.Q_net.train_on_batch(state, Q_train)
-        self.update_epsilon()
         self.trainstep += 1
     
     def save_model(self):
@@ -141,7 +137,7 @@ for e in range(episodes):
     while not result:
         action = Astro.act(state)
         next_state, reward, terminated, truncated, _ = env.step(action)
-        result = terminated or truncated
+        result = terminated
         Astro.update_mem(state, action, reward, next_state, result)
         Astro.train()
         state = next_state
@@ -151,6 +147,7 @@ for e in range(episodes):
             print("total reward after {} episode is {} and epsilon is {}".format(e, total_reward, Astro.epsilon))
             ramount.append(total_reward)
             eamount.append(Astro.epsilon)
+            Astro.epsilon = max(Astro.min_epsilon, Astro.epsilon * Astro.epsilon_decay)
 
 data = {
     "Total Reward" : ramount,
@@ -158,6 +155,4 @@ data = {
 }
 df = pd.DataFrame(data)
 print(df)
-Astro.save_model()
-
-    
+Astro.save_model() 
