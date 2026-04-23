@@ -6,7 +6,7 @@ import numpy as np
 from keras import layers, models, optimizers
 import pandas as pd
 
-memory = 100000 # Replay Buffer
+memory = 50000 # Replay Buffer
 gamma = 0.99
 epsilon = 1.000
 ramount = []
@@ -109,10 +109,12 @@ class Agent():
             return
         if self.trainstep % self.replace == 0:
             self.update_target()
+
         state, action, reward, next_state, result = self.memory.sample(self.batch_size)
         train = self.Q_net.predict(next_state, verbose=0)
         next_state_val = self.train_net.predict(next_state, verbose=0)
         max_action = np.argmax(self.Q_net.predict(next_state, verbose=0), axis=1)
+        
         batch_index = np.arange(self.batch_size, dtype=np.int32)
         Q_train = np.copy(train)
         Q_train[batch_index, action] = reward + self.gamma * next_state_val[batch_index, max_action]*result 
@@ -134,10 +136,15 @@ for e in range(episodes):
     result = False
     state, _ = env.reset()
     total_reward = 0
+    step_count = 0
     while not result:
+        step_count += 1
         action = Astro.act(state)
+        # Check if program is stuck in a long running instance
+        if step_count % 200 == 0:
+            print(f"Episode {e} is still running: Step {step_count}")
         next_state, reward, terminated, truncated, _ = env.step(action)
-        result = terminated
+        result = terminated or truncated
         Astro.update_mem(state, action, reward, next_state, result)
         Astro.train()
         state = next_state
@@ -154,5 +161,5 @@ data = {
     "Epsilion" : eamount
 }
 df = pd.DataFrame(data)
-print(df)
+df.to_csv('data.txt', header=None,index=None, sep=' ', mode='a')
 Astro.save_model() 
