@@ -6,7 +6,7 @@ import numpy as np
 from keras import layers, models, optimizers
 import pandas as pd
 
-memory = 50000 # Replay Buffer
+memory = 100000 # Replay Buffer
 gamma = 0.99
 epsilon = 1.000
 ramount = []
@@ -19,6 +19,7 @@ action_size = int(env.action_space.n) # Collects the number of actions available
 class Double_Network(tf.keras.Model):
     def __init__(self):
         super().__init__()
+        #Layer setup
         self.l1 = layers.Dense(64, activation='relu')
         self.l2 = layers.Dense(64, activation='relu')
         self.state = layers.Dense(1, activation=None)
@@ -29,7 +30,7 @@ class Double_Network(tf.keras.Model):
         x = self.l2(x)
         state = self.state(x)
         action = self.action(x)
-        # Calculates based on the actions.
+        # Calculates based on the action, state, and mean of layers.
         aggreate = state + (action - tf.math.reduce_mean(action, axis=1, keepdims=True)) 
         return aggreate
     
@@ -40,6 +41,7 @@ class Double_Network(tf.keras.Model):
         return adv
     
 class replay():
+    # Works to keep memory of the model.
     def __init__(self):
         self.buffer_size = memory
         self.state_mem = np.zeros((self.buffer_size, *(env.observation_space.shape)), dtype = np.float32)
@@ -69,24 +71,35 @@ class replay():
         return state, action, reward, next_state, result
     
 class Agent():
-    def __init__(self, gamma=0.99, replace=100, lr=0.001):
+    #Main class that generates a dueling double deep Q network
+    def __init__(self, gamma=0.99, replace=1000, lr=0.001):
         self.gamma = gamma
         self.epsilon = epsilon
         self.replace = replace
+
+        #Kept same as largest layer sizes
         self.batch_size = 64
+
+        #Set by epsilon being a default of 1.0
         self.min_epsilon = (epsilon/100.0)
+
+        #Decay is set to multipicative decay value
         self.epsilon_decay = 0.995
         self.trainstep = 0
         self.memory = replay()
+        #Use default Adam optimizer for weights
         optim = optimizers.Adam(learning_rate=lr)
+
+        #Use Huber Loss mixing MSE and MAE to handle losses extreme and small.
+        loss = tf.keras.losses.Huber()
 
         #Our network to train
         self.Q_net = Double_Network()
-        self.Q_net.compile(loss='mse', optimizer=optim)
+        self.Q_net.compile(loss=loss, optimizer=optim)
 
         #Our network to compare with
         self.train_net = Double_Network()
-        self.train_net.compile(loss='mse', optimizer=optim)
+        self.train_net.compile(loss=loss, optimizer=optim)
 
     def act(self, state):
         if np.random.rand() <= self.epsilon:
@@ -102,8 +115,10 @@ class Agent():
 
     def update_target(self):
         self.train_net.set_weights(self.Q_net.get_weights())
-    
 
+    def update_epsilon(self):
+        self.epsilon = max(self.epsilon * self.epsilon_decay, self.min_epsilon) 
+    
     def train(self):
         if self.memory.pointer < self.batch_size:
             return
@@ -111,14 +126,19 @@ class Agent():
             self.update_target()
 
         state, action, reward, next_state, result = self.memory.sample(self.batch_size)
-        train = self.Q_net.predict(next_state, verbose=0)
+        train = self.Q_net.predict(state, verbose=0)
         next_state_val = self.train_net.predict(next_state, verbose=0)
         max_action = np.argmax(self.Q_net.predict(next_state, verbose=0), axis=1)
         
         batch_index = np.arange(self.batch_size, dtype=np.int32)
         Q_train = np.copy(train)
-        Q_train[batch_index, action] = reward + self.gamma * next_state_val[batch_index, max_action]*result 
+
+        #Reward value is reduced to allow for no overstrain on weight calculations.
+        Q_train[batch_index, action] = (reward/10) + self.gamma * next_state_val[batch_index, max_action]*result 
         self.Q_net.train_on_batch(state, Q_train)
+
+        self.update_epsilon()
+            
         self.trainstep += 1
     
     def save_model(self):
@@ -127,6 +147,7 @@ class Agent():
         self.train_net.save("train_DQmodel.h5")
     
     def load_model(self):
+        #Loads current models.
         self.Q_net = models.load_model("DQmodel.h5")
         self.train_net = models.load_model("train_DQmodel.h5")
 
@@ -151,10 +172,9 @@ for e in range(episodes):
         total_reward += reward
 
         if result:
-            print("total reward after {} episode is {} and epsilon is {}".format(e, total_reward, Astro.epsilon))
+            print("total reward after {} episode is {} and epsilon is {}, took {} steps".format(e, total_reward, Astro.epsilon, step_count))
             ramount.append(total_reward)
             eamount.append(Astro.epsilon)
-            Astro.epsilon = max(Astro.min_epsilon, Astro.epsilon * Astro.epsilon_decay)
 
 data = {
     "Total Reward" : ramount,
