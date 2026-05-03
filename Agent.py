@@ -9,16 +9,19 @@ import pandas as pd
 memory = 100000 # Replay Buffer
 gamma = 0.99
 epsilon = 1.000
+#Empty lists to record and save reward and epsilon for runs.
 ramount = []
 eamount = []
+samount = []
 
 # Enviroment Setup
 env = gym.make("LunarLander-v3", continuous=False)
 action_size = int(env.action_space.n) # Collects the number of actions available.
 
+# Model generation and call
 class Double_Network(tf.keras.Model):
-    def __init__(self):
-        super().__init__()
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
         #Layer setup
         self.l1 = layers.Dense(64, activation='relu')
         self.l2 = layers.Dense(64, activation='relu')
@@ -39,9 +42,9 @@ class Double_Network(tf.keras.Model):
         x = self.l2(x)
         adv = self.action(x)
         return adv
-    
+
+#Handles Memory and how the model determines improvement    
 class replay():
-    # Works to keep memory of the model.
     def __init__(self):
         self.buffer_size = memory
         self.state_mem = np.zeros((self.buffer_size, *(env.observation_space.shape)), dtype = np.float32)
@@ -69,13 +72,15 @@ class replay():
         next_state = self.next_state_mem[batch]
         result = self.result_mem[batch]
         return state, action, reward, next_state, result
-    
+
+#Generates a Double Dueling Deep Q Network for use.    
 class Agent():
     #Main class that generates a dueling double deep Q network
     def __init__(self, gamma=0.99, replace=1000, lr=0.001):
         self.gamma = gamma
         self.epsilon = epsilon
         self.replace = replace
+        self.action_size = action_size
 
         #Kept same as largest layer sizes
         self.batch_size = 64
@@ -103,7 +108,7 @@ class Agent():
 
     def act(self, state):
         if np.random.rand() <= self.epsilon:
-            return np.random.choice([i for i in range(env.action_space.n)])
+            return np.random.choice(self.action_size)
         
         else:
             actions = self.Q_net.advantage(np.array([state]))
@@ -126,7 +131,7 @@ class Agent():
             self.update_target()
 
         state, action, reward, next_state, result = self.memory.sample(self.batch_size)
-        train = self.Q_net.predict(state, verbose=0)
+        train = self.Q_net(state, verbose=0)
         next_state_val = self.train_net.predict(next_state, verbose=0)
         max_action = np.argmax(self.Q_net.predict(next_state, verbose=0), axis=1)
         
@@ -145,41 +150,53 @@ class Agent():
         #Saves Models to current directory
         self.Q_net.save("DQmodel.h5")
         self.train_net.save("train_DQmodel.h5")
+
+    def save_weights(self):
+        self.Q_net.save_weights("DQmodel_weights.h5")
+        self.train_net.save_weights("train_DQmodel_weights.h5")
     
     def load_model(self):
         #Loads current models.
-        self.Q_net = models.load_model("DQmodel.h5")
-        self.train_net = models.load_model("train_DQmodel.h5")
+        self.Q_net= models.load_model("DQmodel.h5", custom_objects={"Double_Network": Double_Network})
+        self.train_net = models.load_model("train_DQmodel.h5", custom_objects={"Double_Network": Double_Network})
 
-Astro = Agent()
-episodes = 1000
-for e in range(episodes):
-    result = False
-    state, _ = env.reset()
-    total_reward = 0
-    step_count = 0
-    while not result:
-        step_count += 1
-        action = Astro.act(state)
-        # Check if program is stuck in a long running instance
-        if step_count % 200 == 0:
-            print(f"Episode {e} is still running: Step {step_count}")
-        next_state, reward, terminated, truncated, _ = env.step(action)
-        result = terminated or truncated
-        Astro.update_mem(state, action, reward, next_state, result)
-        Astro.train()
-        state = next_state
-        total_reward += reward
+    def load_weights(self):
+        self.Q_net.load_weights("DQmodel_weights.h5")
+        self.train_net.load_weights("train_DQmodel_weights.h5")
 
-        if result:
-            print("total reward after {} episode is {} and epsilon is {}, took {} steps".format(e, total_reward, Astro.epsilon, step_count))
-            ramount.append(total_reward)
-            eamount.append(Astro.epsilon)
+if __name__ == "__main__":
+    Astro = Agent()
+    episodes = 1000
+    for e in range(episodes):
+        result = False
+        state, _ = env.reset()
+        total_reward = 0
+        step_count = 0
+        while not result:
+            step_count += 1
+            action = Astro.act(state)
+            # Check if program is stuck in a long running instance
+            if step_count % 200 == 0:
+                print(f"Episode {e} is still running: Step {step_count}")
+            next_state, reward, terminated, truncated, _ = env.step(action)
+            result = terminated or truncated
+            Astro.update_mem(state, action, reward, next_state, result)
+            Astro.train()
+            state = next_state
+            total_reward += reward
 
-data = {
-    "Total Reward" : ramount,
-    "Epsilion" : eamount
-}
-df = pd.DataFrame(data)
-df.to_csv('data.txt', header=None,index=None, sep=' ', mode='a')
-Astro.save_model() 
+            if result:
+                print("total reward after {} episode is {} and epsilon is {}, took {} steps".format(e, total_reward, Astro.epsilon, step_count))
+                ramount.append(total_reward)
+                eamount.append(Astro.epsilon)
+                samount.append(step_count)
+
+    data = {
+        "Total Reward" : ramount,
+        "Epsilion" : eamount,
+        "Step Counts": samount
+    }
+    df = pd.DataFrame(data)
+    df.to_csv('data.txt', header=None,index=None, sep=' ', mode='a')
+    Astro.save_model() 
+    Astro.save_weights()
