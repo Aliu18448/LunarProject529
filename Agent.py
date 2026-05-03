@@ -131,7 +131,7 @@ class Agent():
             self.update_target()
 
         state, action, reward, next_state, result = self.memory.sample(self.batch_size)
-        train = self.Q_net(state, verbose=0)
+        train = self.Q_net(state)
         next_state_val = self.train_net.predict(next_state, verbose=0)
         max_action = np.argmax(self.Q_net.predict(next_state, verbose=0), axis=1)
         
