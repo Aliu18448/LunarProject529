@@ -152,8 +152,9 @@ class Agent():
         self.train_net.save("train_DQmodel.h5")
 
     def save_weights(self):
-        self.Q_net.save_weights("DQmodel_weights.h5")
-        self.train_net.save_weights("train_DQmodel_weights.h5")
+        #Save weights for testing
+        self.Q_net.save_weights("DQmodel.weights.h5")
+        self.train_net.save_weights("train_DQmodel.weights.h5")
     
     def load_model(self):
         #Loads current models.
@@ -161,8 +162,9 @@ class Agent():
         self.train_net = models.load_model("train_DQmodel.h5", custom_objects={"Double_Network": Double_Network})
 
     def load_weights(self):
-        self.Q_net.load_weights("DQmodel_weights.h5")
-        self.train_net.load_weights("train_DQmodel_weights.h5")
+        #Loads weights for models
+        self.Q_net.load_weights("DQmodel.weights.h5")
+        self.train_net.load_weights("train_DQmodel.weights.h5")
 
 if __name__ == "__main__":
     Astro = Agent()
@@ -179,6 +181,7 @@ if __name__ == "__main__":
             if step_count % 200 == 0:
                 print(f"Episode {e} is still running: Step {step_count}")
             next_state, reward, terminated, truncated, _ = env.step(action)
+            reward -= abs(next_state[0])*0.5
             result = terminated or truncated
             Astro.update_mem(state, action, reward, next_state, result)
             Astro.train()
@@ -198,5 +201,6 @@ if __name__ == "__main__":
     }
     df = pd.DataFrame(data)
     df.to_csv('data.txt', header=None,index=None, sep=' ', mode='a')
-    Astro.save_model() 
+    #Saves data
     Astro.save_weights()
+    Astro.save_model() 

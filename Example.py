@@ -16,7 +16,7 @@ test.train_net(np.zeros((1,8)))
 test.load_weights()
 test.epsilon = 0.0
 
-episodes = 1000
+episodes = 5
 for e in range(episodes):
     result = False
     state, _ = env.reset()
